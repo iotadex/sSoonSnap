@@ -99,6 +99,15 @@ func main() {
 	data, _ := json.Marshal(amounts)
 	fmt.Println(string(data))
 	fmt.Println("Total amount is :", total)
+
+	stakeAmounts := make(map[string]uint64)
+	for user := range stakingUsers {
+		stakeAmounts[user] = amounts[user]
+	}
+
+	fmt.Println("Staking Users : ")
+	data, _ = json.Marshal(stakeAmounts)
+	fmt.Println(string(data))
 }
 
 func GetIds(nft *cont.INonfungiblePositionManager, sSOON common.Address) {
