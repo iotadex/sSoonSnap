@@ -20,7 +20,12 @@ var sSOONIOTA common.Address = common.HexToAddress("0xa2c8B10F8307246B0252090a80
 var stakeBTC *cont.StakeNFT
 var stakeETH *cont.StakeNFT
 var stakeIota *cont.StakeNFT
-var stakingUsers map[int]map[string]bool
+var stakingUsers map[int]map[string]uint64
+
+type AmountToken struct {
+	Owner  string `json:"owner"`
+	Amount uint64 `json:"amount"`
+}
 
 func main() {
 	client, err := ethclient.Dial(url)
@@ -53,10 +58,11 @@ func main() {
 	sSOON := common.HexToAddress("0x3C844FB5AD27A078d945dDDA8076A4084A76E513")
 
 	amounts := make(map[string]uint64)
-	stakingUsers = make(map[int]map[string]bool)
-	stakingUsers[1] = make(map[string]bool)
-	stakingUsers[2] = make(map[string]bool)
-	stakingUsers[3] = make(map[string]bool)
+	stakingUsers = make(map[int]map[string]uint64)
+	stakingUsers[1] = make(map[string]uint64)
+	stakingUsers[2] = make(map[string]uint64)
+	stakingUsers[3] = make(map[string]uint64)
+
 	for _, id := range ids {
 		time.Sleep(time.Millisecond * 400)
 		fmt.Println("Token id :", id)
@@ -73,26 +79,25 @@ func main() {
 			continue
 		}
 
-		o, a, err := GetStakedOwnerfunc(owner.Bytes(), stakeBTC, big.NewInt(id))
-		if err != nil {
-			fmt.Println("stated contract", id, "error.", err)
-			continue
-		}
-
 		amount := big.NewInt(0)
 		if bytes.Equal(pos.Token0.Bytes(), sSOON.Bytes()) {
 			amount = pos.TokensOwed0
 		} else if bytes.Equal(pos.Token1.Bytes(), sSOON.Bytes()) {
 			amount = pos.TokensOwed1
 		}
-		if a != nil {
-			owner = o
-			amount.Add(amount, a)
+
+		b, err := GetStakedOwnerfunc(owner.Bytes(), stakeBTC, big.NewInt(id), amount.Uint64())
+		if err != nil {
+			fmt.Println("stated contract", id, "error.", err)
+			continue
 		}
-		if a, exist := amounts[owner.Hex()]; exist {
-			amounts[owner.Hex()] = a + amount.Uint64()
-		} else {
-			amounts[owner.Hex()] = amount.Uint64()
+
+		if b == 0 {
+			if a, exist := amounts[owner.Hex()]; exist {
+				amounts[owner.Hex()] = a + amount.Uint64()
+			} else {
+				amounts[owner.Hex()] = amount.Uint64()
+			}
 		}
 	}
 	total := uint64(0)
@@ -100,23 +105,16 @@ func main() {
 		total += a
 	}
 	data, _ := json.Marshal(amounts)
-	fmt.Println(string(data))
-	fmt.Println("Total amount is :", total)
+	fmt.Println("LP token amounts:", string(data))
 
-	stakeAmounts := make(map[string]uint64)
-	for user := range stakingUsers[1] {
-		stakeAmounts[user] = amounts[user]
-	}
-	for user := range stakingUsers[2] {
-		stakeAmounts[user] = amounts[user]
-	}
-	for user := range stakingUsers[3] {
-		stakeAmounts[user] = amounts[user]
-	}
+	data, _ = json.Marshal(stakingUsers[1])
+	fmt.Println("Stake btc token amounts:", string(data))
 
-	fmt.Println("Staking Users : ")
-	data, _ = json.Marshal(stakeAmounts)
-	fmt.Println(string(data))
+	data, _ = json.Marshal(stakingUsers[2])
+	fmt.Println("Stake eth token amounts:", string(data))
+
+	data, _ = json.Marshal(stakingUsers[3])
+	fmt.Println("Stake soon token amounts:", string(data))
 }
 
 func GetIds(nft *cont.INonfungiblePositionManager, sSOON common.Address) {
@@ -136,38 +134,39 @@ func GetIds(nft *cont.INonfungiblePositionManager, sSOON common.Address) {
 	fmt.Println(ids)
 }
 
-func GetStakedOwnerfunc(owner []byte, con *cont.StakeNFT, tokenid *big.Int) (common.Address, *big.Int, error) {
+func GetStakedOwnerfunc(owner []byte, con *cont.StakeNFT, tokenid *big.Int, lp uint64) (int, error) {
 	if bytes.Equal(owner, sSOONBTC[:]) {
-		return IsStaked(owner, stakeBTC, tokenid, 1)
+		return 1, IsStaked(owner, stakeBTC, tokenid, 1, lp)
 	} else if bytes.Equal(owner, sSOONETH[:]) {
-		return IsStaked(owner, stakeETH, tokenid, 2)
+		return 2, IsStaked(owner, stakeETH, tokenid, 2, lp)
 	} else if bytes.Equal(owner, sSOONIOTA[:]) {
-		return IsStaked(owner, stakeIota, tokenid, 3)
+		return 3, IsStaked(owner, stakeIota, tokenid, 3, lp)
 	}
-	return common.Address{}, nil, nil
+	return 0, nil
 }
 
-func IsStaked(owner []byte, con *cont.StakeNFT, tokenid *big.Int, t int) (common.Address, *big.Int, error) {
+func IsStaked(owner []byte, con *cont.StakeNFT, tokenid *big.Int, t int, lp uint64) error {
 	s, err := con.StakingNFTs(&bind.CallOpts{}, tokenid)
 	if err != nil {
-		return s.Owner, nil, err
+		return err
 	}
 	if _, exist := stakingUsers[t][s.Owner.Hex()]; exist {
-		return s.Owner, big.NewInt(0), nil
+		stakingUsers[t][s.Owner.Hex()] = stakingUsers[t][s.Owner.Hex()] + lp
+		return nil
 	}
-	stakingUsers[t][s.Owner.Hex()] = true
 	amount, err := con.CanClaimAmount(&bind.CallOpts{}, s.Owner)
 	if err != nil {
-		return s.Owner, nil, err
+		return err
 	}
 	_, amounts, err := con.LockedRewardAmount(&bind.CallOpts{}, s.Owner)
 	if err != nil {
-		return s.Owner, nil, err
+		return err
 	}
 	for _, a := range amounts {
 		amount.Add(amount, a)
 	}
-	return s.Owner, amount, nil
+	stakingUsers[t][s.Owner.Hex()] = amount.Uint64() + lp
+	return nil
 }
 
 func GetTotal() {
